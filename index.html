@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>One long beautiful screenshot – Stitcher tool</title>
+<style>
+:root{--accent:#d879f9;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#edf2ff;background:#0d1220;color-scheme:dark}*{box-sizing:border-box}body{margin:0;padding:48px 20px}main{max-width:960px;margin:auto}h1{font-size:clamp(1.75rem,5vw,2.625rem);letter-spacing:-1.5px;margin:0 0 12px}p{color:#afbdd6;line-height:1.6}.card{background:#172033;border:1px solid #303e59;border-radius:20px;padding:24px;margin-top:24px}.drop{display:block;border:2px dashed #566c92;border-radius:12px;padding:30px 20px;text-align:center;cursor:pointer;background:#111a2c}.drop.over{border-color:var(--accent);background:#1d2d4d}.drop strong{display:block}input[type=file]{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}.drop:focus-within{outline:2px solid var(--accent);outline-offset:4px}button,.download{font:inherit;font-weight:650;border:0;border-radius:10px;padding:12px 18px;cursor:pointer;background:var(--accent);color:#10182b;text-decoration:none;display:inline-block}button:disabled{opacity:.45;cursor:wait}.secondary{background:#293953;color:#edf2ff}.actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:20px}small{color:#afbdd6;line-height:1.5}#drop + small{display:block;margin-top:.75rem}#files{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;list-style-position:inside;padding-left:0;color:#c4cfe3;max-height:160px;overflow:auto;line-height:1.8;overflow-wrap:anywhere}#status{white-space:pre-line;margin-bottom:0}#status.error{color:#ffb3b3}#result[hidden]{display:none}#result h2{margin-top:0}#preview{width:400px;max-width:100%;overflow:auto;background:repeating-conic-gradient(#1a263b 0% 25%,#202e46 0% 50%) 0/20px 20px;border-radius:10px;margin:20px auto 0;max-height:80vh;text-align:center}#preview.original{width:100%;text-align:left}#preview.original canvas{max-width:none}canvas{max-width:100%;height:auto;vertical-align:top}#report{white-space:pre-line;font-size:.875rem}footer{color:#9aaac5;font-size:.8125rem;margin:24px 0}progress{width:100%;height:8px;margin-top:18px;accent-color:var(--accent)}
+h1 .accent{color:var(--accent)}
+button:not(:disabled):hover,.download:hover{filter:brightness(1.08)}
+:where(button,a,input,summary):focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+</style>
+</head>
+<body><main>
+<h1>One long <span class="accent">beautiful</span> screenshot</h1>
+<p>Upload a sequence of screenshots. The app keeps the header and bottom bar once and joins the scrolling content using overlapping sections.</p>
+<form id="form" class="card">
+<label class="drop" id="drop"><strong>Drop PNG images here or choose files</strong><input id="input" type="file" accept="image/png,.png" aria-describedby="upload-help" multiple required></label>
+<small id="upload-help">Screenshots must have the same dimensions, with overlapping content in consecutive images. Files are sorted by name.</small>
+<ol id="files"></ol>
+
+<div class="actions"><button id="submit" type="submit">Stitch screenshots</button></div><progress id="progress" hidden></progress><p id="status" role="status" aria-live="polite">Images are processed on your device.</p>
+</form>
+<section id="result" class="card" hidden><h2>Stitched image</h2><div class="actions"><a id="download" class="download" download>Download PNG</a><button id="size" class="secondary" type="button">Original size</button></div><p id="report"></p><div id="preview"></div></section>
+<footer>No libraries or uploads to a server. Open this HTML file to use it offline.</footer>
+</main>
+<script>
+(() => {
+'use strict';
+const $=id=>document.getElementById(id);
+const state={files:[],url:null,original:false};
+const collator=new Intl.Collator('en',{numeric:true,sensitivity:'base'});
+const pause=()=>new Promise(resolve=>setTimeout(resolve,0));
+function select(files){state.files=Array.from(files).sort((a,b)=>collator.compare(a.name,b.name)||a.name.localeCompare(b.name));$('files').replaceChildren(...state.files.map(file=>{const li=document.createElement('li');li.textContent=file.name;return li;}));$('status').className='';$('status').textContent=`Files selected: ${state.files.length}.`;}
+$('input').addEventListener('change',e=>select(e.target.files));
+for(const type of ['dragenter','dragover'])$('drop').addEventListener(type,e=>{e.preventDefault();$('drop').classList.add('over');});
+for(const type of ['dragleave','drop'])$('drop').addEventListener(type,e=>{e.preventDefault();$('drop').classList.remove('over');});
+$('drop').addEventListener('drop',e=>{if($('submit').disabled)return;$('input').files=e.dataTransfer.files;select(e.dataTransfer.files);});
+function surface(w,h){const c=document.createElement('canvas');c.width=w;c.height=h;return c;}
+async function decode(file){if(!/\.png$/i.test(file.name)&&file.type!=='image/png')throw Error(`“${file.name}”: please select a PNG file.`);const url=URL.createObjectURL(file);try{const img=new Image();img.src=url;await img.decode();return img;}catch{throw Error(`Could not read “${file.name}”.`);}finally{URL.revokeObjectURL(url);}}
+// Narrow RGB scanlines preserve the original vertical coordinates. Averaging
+// horizontally suppresses antialiasing noise without losing vertical alignment.
+function describe(img){const w=192,c=surface(w,img.height),ctx=c.getContext('2d',{willReadFrequently:true});ctx.fillStyle='#fff';ctx.fillRect(0,0,w,c.height);ctx.drawImage(img,0,0,w,c.height);return {data:ctx.getImageData(0,0,w,c.height).data,w,h:c.height};}
+function rowDiff(a,ya,b,yb,sample=1){let sum=0,count=0;const n=a.w*4,ia=ya*n,ib=yb*n;for(let x=0;x<n;x+=4*sample){for(let k=0;k<3;k++)sum+=Math.abs(a.data[ia+x+k]-b.data[ib+x+k]);count+=3;}return sum/count;}
+// Stop comparing a nonmatching scanline as soon as its error exceeds the budget.
+function alignmentDiff(a,ya,b,yb){let sum=0;const n=a.w*4,ia=ya*n,ib=yb*n,limit=a.w*3*7;for(let x=0;x<n;x+=4){for(let k=0;k<3;k++)sum+=Math.abs(a.data[ia+x+k]-b.data[ib+x+k]);if(sum>limit)return 255;}return sum/(a.w*3);}
+function texture(d,y){let sum=0;const start=y*d.w*4;for(let x=1;x<d.w;x++)for(let k=0;k<3;k++)sum+=Math.abs(d.data[start+x*4+k]-d.data[start+(x-1)*4+k]);return sum/((d.w-1)*3);}
+function prepare(d){d.detail=Float32Array.from({length:d.h},(_,y)=>Math.max(texture(d,y),y?rowDiff(d,y,d,y-1):0));return d;}
+// Isolated changes in the status bar must not join the scrolling table.
+// Gaps between text baselines are allowed, even if alternating row backgrounds
+// happen to stay identical after scrolling by an even number of rows.
+function activityRange(stationary){
+ const h=stationary.length,gap=Math.max(24,Math.round(h*.08));let groups=[],group=null;
+ for(let y=0;y<h;y++)if(stationary[y]>.35){if(!group||y-group.end>gap){group={start:y,end:y,count:0};groups.push(group);}group.end=y;group.count++;}
+ groups.sort((a,b)=>b.count-a.count);return groups.length?{top:groups[0].start,end:groups[0].end+1}:{top:0,end:h};
+}
+// Rank translations by error over the WHOLE informative overlap, not by the
+// number of approximate matches. Long repeated tables must not beat a short,
+// exact match merely because they contain more copies of “Run” and “0.50”.
+async function findMotion(a,b){
+ const h=a.h,step=Math.max(1,Math.floor(h/600));
+ const stationary=Float32Array.from({length:h},(_,y)=>rowDiff(a,y,b,y));
+ if(stationary.every(e=>e<.01))return {shift:0,stationary};
+ const {top,end}=activityRange(stationary),minOverlap=16;
+ function evaluate(shift,stride){let error=0,good=0,rows=0;
+  for(let y=top;y<end-shift;y+=stride){const detail=Math.max(a.detail[y+shift],b.detail[y]);if(detail<2)continue;
+   // Relative error retains the importance of small differing digits on a
+   // mostly empty row. Missing text is a mismatch, not an ignored scanline.
+   const diff=rowDiff(a,y+shift,b,y,stride>1?3:1),relative=Math.min(2,diff/Math.max(4,detail));
+   error+=relative;rows++;if(relative<.12)good++;
+  }
+  const information=rows*stride,quality=rows?error/rows:Infinity;
+  return {shift,error:quality,information,good:rows?good/rows:0,score:quality+.02/Math.sqrt(Math.max(1,information))};
+ }
+ const candidates=[];for(let shift=1;shift<=end-top-minOverlap;shift++){const c=evaluate(shift,step);if(c.information>=12)candidates.push(c);if(shift%80===0)await pause();}
+ candidates.sort((a,b)=>a.score-b.score);
+ const shortlist=new Set();for(const c of candidates.slice(0,16))for(let d=-1;d<=1;d++)if(c.shift+d>0&&c.shift+d<=end-top-minOverlap)shortlist.add(c.shift+d);
+ const refined=[...shortlist].map(shift=>evaluate(shift,1)).filter(c=>c.information>=12).sort((a,b)=>a.score-b.score);
+ const best=refined[0];const other=refined.find(c=>Math.abs(c.shift-best.shift)>2);
+ if(!best||best.error>.16||best.good<.65||other&&other.error<=best.error*1.35+.008){
+  throw Error('Could not reliably determine the scroll offset. Use consecutive screenshots with distinct overlapping content. Repeated elements, animation, or missing overlap can prevent matching.');
+ }
+ return {shift:best.shift,stationary};
+}
+// Accumulate moving evidence at both ends of each correspondence. A changing
+// clock cannot become a boundary unless it also moves with the content.
+function boundaries(ds,matches){const h=ds[0].h,votes=new Uint16Array(h);for(let i=0;i<matches.length;i++){
+ const m=matches[i];if(!m.shift)continue;const a=ds[i],b=ds[i+1];
+ for(let y=0;y<h-m.shift;y++){const diff=alignmentDiff(a,y+m.shift,b,y);if(Math.min(a.detail[y+m.shift],b.detail[y])>3&&diff<7&&diff+2<Math.max(m.stationary[y],m.stationary[y+m.shift])){votes[y]++;votes[y+m.shift]++;}}
+ }
+ let first=-1,last=-1;for(let y=0;y<h;y++)if(votes[y]){let support=0;for(let k=Math.max(0,y-3);k<Math.min(h,y+4);k++)if(votes[k])support++;if(support>=2){if(first<0)first=y;last=y;}}
+ if(first<0)return {top:0,bottom:0};
+ // Include adjacent changed rows (e.g. a flat strip at the viewport edge),
+ // but stop at rows that remain stationary across the sequence.
+ const moving=y=>matches.some(m=>m.shift&&m.stationary[y]>3);
+ while(first>0&&moving(first-1))first--;while(last<h-1&&moving(last+1))last++;
+ return {top:first,bottom:h-last-1};
+}
+function chooseSeam(a,b,m,top,end,minY){if(!m.shift)return top;const lo=Math.max(top,minY),hi=end-m.shift;if(lo>hi)throw Error('Could not align the scrolling area boundaries. Try screenshots with more overlapping content.');
+ let best=Infinity,seam=lo;for(let y=lo;y<=hi;y++){let sum=0,n=0;for(let k=Math.max(lo,y-3);k<=Math.min(hi,y+3);k++){sum+=rowDiff(a,k+m.shift,b,k);n++;}const cost=sum/n+Math.abs(y-(lo+hi)/2)*.0001;if(cost<best){best=cost;seam=y;}}
+ if(best>10)throw Error('Could not find a reliable seam in the overlap. Capture screenshots after scrolling has stopped, without animations or pop-ups.');return seam;
+}
+$('size').addEventListener('click',()=>{state.original=!state.original;$('preview').classList.toggle('original',state.original);$('size').textContent=state.original?'Fit to preview':'Original size';});
+$('form').addEventListener('submit',async e=>{e.preventDefault();if(!state.files.length)return;const files=[...state.files];$('submit').disabled=true;$('input').disabled=true;$('progress').hidden=false;$('result').hidden=true;$('status').className='';const images=[];try{
+for(let i=0;i<files.length;i++){$('status').textContent=`Loading ${i+1} of ${files.length}…`;images.push(await decode(files[i]));await pause();}
+const {width:w,height:h}=images[0];if(images.some(img=>img.width!==w||img.height!==h))throw Error('All screenshots must have the same width and height.');
+const ds=images.map(img=>prepare(describe(img)));
+const matches=[];for(let i=1;i<images.length;i++){$('status').textContent=`Finding overlap: ${i} / ${images.length-1}…`;await pause();try{matches.push(await findMotion(ds[i-1],ds[i]));}catch(error){throw Error(`${files[i-1].name} → ${files[i].name}: ${error.message}`);}}
+const {top,bottom}=boundaries(ds,matches);let offset=0,lastCut=0;
+for(let i=0;i<matches.length;i++){const m=matches[i];offset+=m.shift;m.offset=offset;if(!m.shift)continue;try{m.seam=chooseSeam(ds[i],ds[i+1],m,top,h-bottom,Math.max(top,lastCut-offset));lastCut=offset+m.seam;}catch(error){throw Error(`${files[i].name} → ${files[i+1].name}: ${error.message}`);}}
+const outHeight=h+matches.reduce((sum,m)=>sum+m.shift,0);if(outHeight>65535||w*outHeight>120000000)throw Error('The result is too large to export. Stitch the screenshots in smaller groups.');
+$('status').textContent='Creating PNG…';await pause();const canvas=surface(w,outHeight),ctx=canvas.getContext('2d');if(!ctx)throw Error('The browser could not create the image canvas.');ctx.drawImage(images[0],0,0,w,h-bottom,0,0,w,h-bottom);for(let i=1;i<images.length;i++){const m=matches[i-1];if(m.shift){const length=h-bottom-m.seam;ctx.drawImage(images[i],0,m.seam,w,length,0,m.offset+m.seam,w,length);}}if(bottom)ctx.drawImage(images.at(-1),0,h-bottom,w,bottom,0,outHeight-bottom,w,bottom);
+const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));if(!blob)throw Error('Could not export the image: it exceeds the canvas limits of this browser.');if(state.url)URL.revokeObjectURL(state.url);state.url=URL.createObjectURL(blob);$('download').href=state.url;$('download').download=files[0].name.replace(/\.[^.]+$/, '')+'-stitched.png';state.original=false;$('preview').classList.remove('original');$('size').textContent='Original size';$('preview').replaceChildren(canvas);$('result').hidden=false;
+$('report').textContent=`${w} × ${outHeight} px · Files: ${files.length}`;
+$('status').textContent='Done. Your image is ready to download as a PNG.';
+}catch(error){$('status').className='error';$('status').textContent=error.message||String(error);}finally{$('submit').disabled=false;$('input').disabled=false;$('progress').hidden=true;}});
+})();
+</script></body></html>
